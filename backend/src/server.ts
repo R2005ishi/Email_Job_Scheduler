@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import express, { NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
@@ -47,6 +49,14 @@ async function main() {
   boardAdapter.setBasePath('/admin/queues');
   createBullBoard({ queues: [new BullMQAdapter(emailQueue)], serverAdapter: boardAdapter });
   app.use('/admin/queues', bullBoardAuth, boardAdapter.getRouter());
+
+  // In production the built React app is served from here too, so the whole
+  // thing runs on one URL (and the login cookie works without CORS issues)
+  const frontendDist = path.resolve(__dirname, '../../frontend/dist');
+  if (fs.existsSync(frontendDist)) {
+    app.use(express.static(frontendDist));
+    app.get(/^\/(?!api\/|admin\/).*/, (_req, res) => res.sendFile(path.join(frontendDist, 'index.html')));
+  }
 
   app.use(errorHandler);
 

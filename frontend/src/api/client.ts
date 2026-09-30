@@ -34,7 +34,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const oauthUrls = {
   googleLogin: '/api/auth/google',
   slackConnect: '/api/slack/connect',
-  bullBoard: 'http://localhost:4000/admin/queues',
+  bullBoard: '/admin/queues',
 };
 
 export const api = {

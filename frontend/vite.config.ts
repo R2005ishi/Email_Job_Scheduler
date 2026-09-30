@@ -9,6 +9,7 @@ export default defineConfig({
     // Same-origin API calls in dev -> the httpOnly session cookie just works.
     proxy: {
       '/api': { target: 'http://localhost:4000', changeOrigin: false },
+      '/admin': { target: 'http://localhost:4000', changeOrigin: false },
     },
   },
 });

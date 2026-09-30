@@ -53,6 +53,22 @@ npm run dev                 # http://localhost:5173
 
 The API and the worker are separate processes, so either can be restarted on its own, and you can run more than one worker.
 
+## Deployment (Railway)
+
+The `Dockerfile` builds one image with the backend and the built frontend. The backend serves the frontend,
+so the whole app runs on one URL. The same image is used twice:
+
+- **api** service: default start command (runs DB migrations, then the server)
+- **worker** service: start command `node dist/worker.js`
+
+Plus Railway's Postgres and Redis, and an Elasticsearch service from the Docker image
+`docker.elastic.co/elasticsearch/elasticsearch:8.15.3` (with `discovery.type=single-node`,
+`xpack.security.enabled=false`, `ES_JAVA_OPTS=-Xms512m -Xmx512m`). If Elasticsearch isn't available,
+search falls back to Postgres.
+
+Both api and worker need the same environment variables. `BACKEND_URL`, `FRONTEND_URL` and
+`SLACK_REDIRECT_BASE_URL` are all the public Railway URL, and the Google / Slack redirect URLs point to it.
+
 ## Environment variables (`backend/.env`)
 
 | Variable | What it is |
