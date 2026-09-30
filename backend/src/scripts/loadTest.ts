@@ -1,12 +1,6 @@
-/**
- * Schedules N emails for (roughly) the same instant to demonstrate behaviour under load.
- *
- *   npm run load-test -- --count 1000 --in 30 --hourly 50 [--user you@gmail.com]
- *
- * Watch it in Bull Board (/admin/queues): all jobs become due together, each one
- * reserves its own slot (min gap + hourly cap), and the overflow is moved to the
- * next hour window instead of being dropped.
- */
+// Schedules a lot of emails for the same time to test behaviour under load.
+//   npm run load-test -- --count 1000 --in 30 --hourly 50 [--user you@gmail.com]
+// Watch /admin/queues: emails over the hourly limit move to the next hour.
 import { prisma } from '../lib/prisma';
 import { redis } from '../lib/redis';
 import { emailQueue } from '../queue/emailQueue';

@@ -22,16 +22,16 @@ slackRouter.get(
   }),
 );
 
-/** Step 1 of the OAuth dance - the dashboard's "Connect Slack" button navigates here. */
+// "Connect Slack" button in the dashboard opens this URL
 slackRouter.get('/connect', requireAuth, (req, res) => {
   if (!isSlackConfigured()) return res.redirect(`${env.FRONTEND_URL}/?slack=not_configured`);
-  // The signed state carries the user id, so the callback also works when it
-  // lands on a different host (e.g. an https tunnel) that doesn't have our cookie.
+  // The callback arrives through the https tunnel, where our session cookie
+  // isn't available, so the user id travels in the signed state instead.
   const state = signState({ userId: (req as AuthedRequest).userId });
   res.redirect(buildSlackAuthorizeUrl(state));
 });
 
-/** Step 2 - Slack redirects back with ?code&state. */
+// Slack redirects back here with ?code and ?state
 slackRouter.get(
   '/callback',
   asyncHandler(async (req, res) => {

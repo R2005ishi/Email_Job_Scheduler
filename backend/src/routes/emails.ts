@@ -47,13 +47,13 @@ emailsRouter.get(
     if (q) {
       const ids = await searchEmailIds(req.userId, q, statuses);
       if (ids) {
-        // Elasticsearch decides what matches; Postgres returns the authoritative rows.
+        // Elasticsearch finds the ids, Postgres returns the actual rows
         const rows = await prisma.email.findMany({ where: { ...where, id: { in: ids } }, select: emailSelect });
         const rank = new Map(ids.map((id, i) => [id, i]));
         rows.sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
         return res.json({ items: rows, total: rows.length, page: 1, pageSize: rows.length, source: 'elasticsearch' });
       }
-      // ES unavailable -> degrade gracefully to a SQL ILIKE search
+      // Elasticsearch is down, fall back to a simple SQL search
       where.OR = [
         { subject: { contains: q, mode: 'insensitive' } },
         { toEmail: { contains: q, mode: 'insensitive' } },

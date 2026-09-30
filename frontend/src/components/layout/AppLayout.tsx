@@ -4,7 +4,6 @@ import { DashboardProvider } from '../../context/DashboardContext';
 import { FullPageSpinner } from '../ui/Spinner';
 import { Sidebar } from './Sidebar';
 
-/** Auth-guarded dashboard shell. */
 export function AppLayout() {
   const { user, loading } = useAuth();
   if (loading) return <FullPageSpinner />;

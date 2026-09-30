@@ -14,7 +14,7 @@ export const signSession = (userId: string) =>
 
 export const verifySession = (token: string) => jwt.verify(token, env.JWT_SECRET) as SessionPayload;
 
-/** Short-lived signed state for OAuth round-trips (CSRF protection + carries the user id). */
+// signed, short-lived OAuth state (protects against CSRF)
 export const signState = (payload: Record<string, string>) =>
   jwt.sign(payload, env.JWT_SECRET, { expiresIn: 600 });
 
@@ -54,7 +54,7 @@ interface GoogleUserInfo {
   picture?: string;
 }
 
-/** Real authorization-code exchange with Google, then upsert the user. */
+// exchange the Google auth code for the user profile and save the user
 export async function loginWithGoogleCode(code: string) {
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',

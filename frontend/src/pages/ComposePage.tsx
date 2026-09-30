@@ -101,7 +101,7 @@ export function ComposePage() {
               onChange={(e) => setSenderId(e.target.value)}
               className="h-9 cursor-pointer appearance-none rounded-lg bg-surface pr-9 pl-3 text-sm text-neutral-800 outline-none"
             >
-              {senders.length === 0 && <option value="">Loading senders…</option>}
+              {senders.length === 0 && <option value="">Loading senders...</option>}
               {senders.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.email}
@@ -112,7 +112,7 @@ export function ComposePage() {
           </div>
           {selectedSender && (
             <span className="ml-3 text-xs text-neutral-400">
-              {selectedSender.name} · max {selectedSender.hourlyLimit}/hour
+              {selectedSender.name}, max {selectedSender.hourlyLimit}/hour
             </span>
           )}
         </FieldRow>

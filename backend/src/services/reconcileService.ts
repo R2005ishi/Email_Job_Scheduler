@@ -1,43 +1,40 @@
 import { prisma } from '../lib/prisma';
 import { createLogger } from '../lib/logger';
-import { emailQueue, enqueueEmailsBulk } from '../queue/emailQueue';
+import { emailQueue, enqueueEmails } from '../queue/emailQueue';
 
 const log = createLogger('reconcile');
 
-/**
- * Postgres is the source of truth, Redis holds the timers.
- *
- * Normally nothing needs to happen on restart: BullMQ delayed jobs live in Redis
- * (persisted with AOF), so they simply fire at their timestamp once a worker is
- * back. This pass covers the edge cases - Redis data lost, or the process died
- * between the DB commit and `addBulk` - by re-adding a job for every pending
- * email that has none. jobId = emailId makes it impossible to create duplicates.
- */
+// Runs when the API starts. Delayed jobs are stored in Redis, so after a
+// normal restart they are all still there. This only matters if Redis lost
+// data or the server crashed between saving emails and queueing them: any
+// pending email without a job gets its job added back.
 export async function reconcilePendingEmails() {
-  const BATCH = 1000;
+  const batchSize = 1000;
   let cursor: string | undefined;
   let checked = 0;
   let restored = 0;
 
-  for (;;) {
+  while (true) {
     const pending = await prisma.email.findMany({
       where: { status: { in: ['SCHEDULED', 'SENDING'] } },
       select: { id: true, scheduledAt: true, slotAt: true },
       orderBy: { id: 'asc' },
-      take: BATCH,
+      take: batchSize,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
-    if (!pending.length) break;
+    if (pending.length === 0) break;
+
     cursor = pending[pending.length - 1].id;
     checked += pending.length;
 
-    const missing: { emailId: string; runAt: Date }[] = [];
-    for (const e of pending) {
-      const job = await emailQueue.getJob(e.id);
-      if (!job) missing.push({ emailId: e.id, runAt: e.slotAt ?? e.scheduledAt });
+    const missing = [];
+    for (const email of pending) {
+      const job = await emailQueue.getJob(email.id);
+      if (!job) missing.push({ emailId: email.id, runAt: email.slotAt ?? email.scheduledAt });
     }
-    if (missing.length) {
-      await enqueueEmailsBulk(missing);
+
+    if (missing.length > 0) {
+      await enqueueEmails(missing);
       restored += missing.length;
     }
   }

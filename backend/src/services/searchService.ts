@@ -51,7 +51,7 @@ const toDoc = (e: IndexableEmail) => ({
   sentAt: e.sentAt,
 });
 
-/** Indexing is best-effort: search must never block or break sending. */
+// If Elasticsearch is down we just log it - sending emails should not depend on search
 export async function indexEmails(emails: IndexableEmail[]) {
   if (!emails.length) return;
   try {
@@ -71,7 +71,7 @@ export async function indexEmail(email: IndexableEmail) {
   }
 }
 
-/** Returns matching email ids ordered by relevance, or null if ES is down. */
+// Returns matching email ids (best match first), or null if Elasticsearch is down
 export async function searchEmailIds(userId: string, q: string, statuses?: string[]): Promise<string[] | null> {
   try {
     const fields = ['subject^3', 'toEmail^2', 'senderEmail', 'body'];
@@ -82,8 +82,8 @@ export async function searchEmailIds(userId: string, q: string, statuses?: strin
       query: {
         bool: {
           filter: [{ term: { userId } }, ...(statuses?.length ? [{ terms: { status: statuses } }] : [])],
-          // typo-tolerant full-word match OR search-as-you-type prefix match;
-          // operator=and so "john@acme.com" doesn't match every "@acme.com" row.
+          // fuzzy match handles typos, prefix match handles partial words.
+          // operator "and" so john@acme.com doesn't match everyone at acme.com
           should: [
             { multi_match: { query: q, fields, fuzziness: 'AUTO', operator: 'and' } },
             { multi_match: { query: q, fields, type: 'bool_prefix', operator: 'and' } },

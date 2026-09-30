@@ -5,17 +5,15 @@ import { createLogger } from '../lib/logger';
 
 const log = createLogger('slack');
 
-export const SLACK_SCOPES = ['incoming-webhook'];
-
-export const slackRedirectUri = () => `${env.SLACK_REDIRECT_BASE_URL}/api/slack/callback`;
-
 export const isSlackConfigured = () => Boolean(env.SLACK_CLIENT_ID && env.SLACK_CLIENT_SECRET);
+
+const redirectUri = () => `${env.SLACK_REDIRECT_BASE_URL}/api/slack/callback`;
 
 export function buildSlackAuthorizeUrl(state: string) {
   const url = new URL('https://slack.com/oauth/v2/authorize');
   url.searchParams.set('client_id', env.SLACK_CLIENT_ID);
-  url.searchParams.set('scope', SLACK_SCOPES.join(','));
-  url.searchParams.set('redirect_uri', slackRedirectUri());
+  url.searchParams.set('scope', 'incoming-webhook');
+  url.searchParams.set('redirect_uri', redirectUri());
   url.searchParams.set('state', state);
   return url.toString();
 }
@@ -28,7 +26,8 @@ interface SlackOAuthResponse {
   incoming_webhook?: { channel: string; url: string };
 }
 
-/** Exchanges the OAuth code and stores the webhook for this user (upsert = reconnect). */
+// Exchange the OAuth code for a webhook URL and save it for the user.
+// Upsert, so reconnecting just replaces the old webhook.
 export async function completeSlackOAuth(userId: string, code: string) {
   const res = await fetch('https://slack.com/api/oauth.v2.access', {
     method: 'POST',
@@ -37,14 +36,15 @@ export async function completeSlackOAuth(userId: string, code: string) {
       code,
       client_id: env.SLACK_CLIENT_ID,
       client_secret: env.SLACK_CLIENT_SECRET,
-      redirect_uri: slackRedirectUri(),
+      redirect_uri: redirectUri(),
     }),
   });
   const data = (await res.json()) as SlackOAuthResponse;
   if (!data.ok || !data.incoming_webhook || !data.team) {
-    throw new Error(`Slack OAuth failed: ${data.error ?? 'missing incoming_webhook'}`);
+    throw new Error(`Slack OAuth failed: ${data.error ?? 'no incoming_webhook in response'}`);
   }
-  const payload = {
+
+  const fields = {
     teamId: data.team.id,
     teamName: data.team.name,
     channel: data.incoming_webhook.channel,
@@ -53,68 +53,54 @@ export async function completeSlackOAuth(userId: string, code: string) {
   };
   return prisma.slackIntegration.upsert({
     where: { userId },
-    update: payload,
-    create: { userId, ...payload },
+    update: fields,
+    create: { userId, ...fields },
   });
 }
 
-async function postToWebhook(webhookUrl: string, body: object) {
-  const res = await fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`Slack webhook responded ${res.status}: ${await res.text()}`);
-}
-
-/**
- * Sends a message to the user's connected Slack. The integration is looked up
- * from the DB on every call, so connecting / disconnecting takes effect
- * immediately (no restart / redeploy). No integration => silently skipped.
- */
-export async function notifyUser(userId: string, text: string, blocks?: object[]) {
+// Posts a message to the user's Slack. The webhook is read from the DB each
+// time, so connecting/disconnecting works without a restart. Returns false if
+// the user hasn't connected Slack or the webhook call fails - a Slack problem
+// should never break sending emails.
+export async function notifyUser(userId: string, text: string) {
   const integration = await prisma.slackIntegration.findUnique({ where: { userId } });
   if (!integration) return false;
+
   try {
-    await postToWebhook(integration.webhookUrl, { text, ...(blocks ? { blocks } : {}) });
+    const res = await fetch(integration.webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) throw new Error(`webhook returned ${res.status}`);
     return true;
   } catch (err) {
-    // A revoked webhook must never break the email pipeline.
-    log.warn(`Slack notify failed for user ${userId}`, (err as Error).message);
+    log.warn(`Slack message failed for user ${userId}: ${(err as Error).message}`);
     return false;
   }
 }
 
-/**
- * Fires exactly one "hourly limit reached" message per (user, limit subject, hour window),
- * no matter how many workers hit the limit concurrently (Redis SET NX).
- */
-export async function notifyRateLimitReached(params: {
+// Sends one alert per user + sender/campaign + hour. Several workers can hit
+// the limit at the same moment, so the Redis SET NX makes sure only one sends.
+export async function notifyLimitReached(params: {
   userId: string;
-  kind: 'sender' | 'campaign';
-  subjectId: string;
-  label: string;
+  type: 'sender' | 'campaign';
+  id: string;
+  name: string;
   limit: number;
-  window: number;
+  hour: number;
   resumesAt: number;
 }) {
-  const dedupeKey = `slack:rl:${params.userId}:${params.kind}:${params.subjectId}:${params.window}`;
-  const first = await redis.set(dedupeKey, '1', 'EX', 2 * 3600, 'NX');
-  if (!first) return;
+  const key = `slack:limit:${params.userId}:${params.type}:${params.id}:${params.hour}`;
+  const isFirst = await redis.set(key, '1', 'EX', 2 * 3600, 'NX');
+  if (!isFirst) return;
 
-  const windowStart = new Date(params.window * 3_600_000);
-  const what = params.kind === 'sender' ? `Sender *${params.label}*` : `Campaign *${params.label}*`;
+  const label = params.type === 'sender' ? `Sender *${params.name}*` : `Campaign *${params.name}*`;
   const text =
-    `:rotating_light: ${what} reached its hourly limit of ${params.limit} emails ` +
-    `for the hour starting ${windowStart.toUTCString()}. ` +
-    `Remaining emails are queued and resume at ${new Date(params.resumesAt).toUTCString()}.`;
+    `:rotating_light: ${label} reached its hourly limit of ${params.limit} emails. ` +
+    `The remaining emails are still queued and will continue at ${new Date(params.resumesAt).toUTCString()}.`;
 
-  const sent = await notifyUser(params.userId, text, [
-    { type: 'section', text: { type: 'mrkdwn', text } },
-    {
-      type: 'context',
-      elements: [{ type: 'mrkdwn', text: 'ReachInbox Email Scheduler • nothing was dropped, jobs were rescheduled' }],
-    },
-  ]);
-  if (sent) log.info(`Rate-limit Slack alert sent to user ${params.userId} (${params.kind} ${params.label})`);
+  if (await notifyUser(params.userId, text)) {
+    log.info(`Limit alert sent to Slack for user ${params.userId} (${params.type}: ${params.name})`);
+  }
 }

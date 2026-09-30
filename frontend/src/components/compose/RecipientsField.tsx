@@ -13,10 +13,7 @@ interface RecipientsFieldProps {
 const MAX_CHIPS = 3;
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
-/**
- * "To" row: type addresses (Enter / comma) or upload a CSV / TXT of leads.
- * Uploaded files are parsed client-side and the detected count is shown.
- */
+// "To" field: type emails, or upload a CSV/TXT file of leads
 export function RecipientsField({ recipients, onChange, fileName, onFileName, onError }: RecipientsFieldProps) {
   const [draft, setDraft] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -32,7 +29,7 @@ export function RecipientsField({ recipients, onChange, fileName, onFileName, on
     if ((e.key === 'Enter' || e.key === ',' || e.key === ' ') && draft.trim()) {
       e.preventDefault();
       if (addFromText(draft)) setDraft('');
-      else onError(`“${draft}” is not a valid email address`);
+      else onError(`"${draft}" is not a valid email address`);
     } else if (e.key === 'Backspace' && !draft && recipients.length) {
       onChange(recipients.slice(0, -1));
     }

@@ -20,7 +20,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   return <input ref={ref} className={`${width} text-sm outline-none transition ${variants[variant]} ${className}`} {...rest} />;
 });
 
-/** Label-on-the-left row used by the compose form (From / To / Subject ...). */
+// label + field row used in the compose form
 export function FieldRow({ label, children, htmlFor }: { label: string; children: React.ReactNode; htmlFor?: string }) {
   return (
     <div className="flex items-center gap-4">

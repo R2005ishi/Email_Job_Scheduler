@@ -15,7 +15,7 @@ const SLACK_RESULT_MESSAGES: Record<string, [kind: 'success' | 'error', message:
   not_configured: ['error', 'Slack OAuth is not configured on the server (SLACK_CLIENT_ID / SECRET).'],
 };
 
-/** Sidebar profile card (Figma) + menu with Slack connection and logout. */
+// Profile card in the sidebar, with a menu for Slack and logout
 export function UserMenu() {
   const { user, logout } = useAuth();
   const toast = useToast();
@@ -31,7 +31,7 @@ export function UserMenu() {
     void loadSlack();
   }, [loadSlack]);
 
-  // Result of the Slack OAuth redirect (?slack=connected|error)
+  // after Slack OAuth we come back with ?slack=connected or ?slack=error
   useEffect(() => {
     const result = params.get('slack');
     if (!result) return;
@@ -83,7 +83,7 @@ export function UserMenu() {
           <Spinner size={14} className="mt-2 text-neutral-400" />
         ) : slack.connected && slack.integration ? (
           <p className="mt-1 text-sm text-neutral-700">
-            Connected to <b>{slack.integration.teamName}</b> · {slack.integration.channel}
+            Connected to <b>{slack.integration.teamName}</b>, {slack.integration.channel}
           </p>
         ) : (
           <p className="mt-1 text-sm text-neutral-500">Get notified when a sender hits its hourly limit.</p>

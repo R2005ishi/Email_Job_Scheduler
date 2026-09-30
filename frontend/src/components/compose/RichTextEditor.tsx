@@ -26,14 +26,11 @@ type Tool = { label: string; icon: React.ReactNode; run: () => void } | 'divider
 
 const exec = (command: string, arg?: string) => document.execCommand(command, false, arg);
 
-/**
- * Lightweight contentEditable editor matching the Figma toolbar.
- * (execCommand is deprecated but universally supported and keeps us dependency-free.)
- */
+// Simple rich text editor using contentEditable + execCommand (no extra library)
 export function RichTextEditor({ value, onChange, placeholder = 'Type Your Reply...' }: RichTextEditorProps) {
   const ref = useRef<HTMLDivElement>(null);
 
-  // Only push external value into the DOM when it differs (e.g. form reset) to keep the caret stable.
+  // only overwrite the DOM when the value changed from outside, otherwise the cursor jumps
   useEffect(() => {
     if (ref.current && ref.current.innerHTML !== value) ref.current.innerHTML = value;
   }, [value]);

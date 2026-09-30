@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
-  // Real OAuth: full-page redirect to the backend, which redirects to Google.
+  // goes to the backend, which redirects to Google
   const login = useCallback(() => window.location.assign(oauthUrls.googleLogin), []);
 
   const logout = useCallback(async () => {

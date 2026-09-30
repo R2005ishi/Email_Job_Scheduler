@@ -73,7 +73,7 @@ export function EmailDetailPage() {
 
           <dl className="mt-8 grid max-w-3xl grid-cols-2 gap-x-6 gap-y-2 rounded-xl bg-surface p-4 text-xs text-neutral-600 sm:grid-cols-4">
             <Meta label="Requested for" value={formatFullDate(email.scheduledAt)} />
-            <Meta label="Send slot" value={email.slotAt ? formatFullDate(email.slotAt) : '—'} />
+            <Meta label="Send slot" value={email.slotAt ? formatFullDate(email.slotAt) : '-'} />
             <Meta label="Attempts" value={String(email.attempts)} />
             <Meta label="Rate-limit deferrals" value={String(email.deferredCount)} />
             {email.error && <Meta label="Last error" value={email.error} wide />}

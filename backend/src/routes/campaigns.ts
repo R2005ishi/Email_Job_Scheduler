@@ -14,9 +14,9 @@ const createSchema = z.object({
   body: z.string().min(1).max(200_000),
   recipients: z.array(z.string().trim().email()).min(1).max(50_000),
   startAt: z.coerce.date(),
-  /** Seconds between consecutive emails of this campaign */
+  // seconds between two emails of this campaign
   delaySeconds: z.number().min(0).max(24 * 3600),
-  /** Max emails/hour for this campaign; 0 = only the sender-level cap applies */
+  // max emails per hour for this campaign, 0 = only the sender limit applies
   hourlyLimit: z.number().int().min(0).max(100_000),
 });
 

@@ -7,7 +7,7 @@ interface AsyncState<T> {
   reload: () => Promise<void>;
 }
 
-/** Runs an async loader whenever deps change; ignores stale responses. */
+// Loads data when deps change. Ignores responses from older requests.
 export function useAsync<T>(loader: () => Promise<T>, deps: DependencyList): AsyncState<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);

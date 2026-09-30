@@ -1,5 +1,5 @@
 import { prisma } from '../lib/prisma';
-import { enqueueEmailsBulk } from '../queue/emailQueue';
+import { enqueueEmails } from '../queue/emailQueue';
 import { indexEmails } from './searchService';
 import { HttpError } from '../middleware/errors';
 
@@ -14,14 +14,9 @@ export interface CreateCampaignInput {
   hourlyLimit: number;
 }
 
-/**
- * Persists the campaign + one Email row per recipient in a single transaction,
- * THEN enqueues delayed jobs. Postgres is the source of truth: if enqueueing
- * is interrupted, startup reconciliation re-creates any missing jobs.
- *
- * Planned time for recipient i = startAt + i * delay. The worker may push an
- * email later (min-gap / hourly caps) but never earlier.
- */
+// Saves the campaign and one email row per recipient, then queues a delayed
+// job for each email. Email i is planned for startAt + i * delay; the worker
+// can push it later because of rate limits, but never earlier.
 export async function createCampaign(input: CreateCampaignInput) {
   const sender = await prisma.sender.findUnique({ where: { id: input.senderId } });
   if (!sender) throw new HttpError(400, 'Unknown sender');
@@ -31,7 +26,7 @@ export async function createCampaign(input: CreateCampaignInput) {
   const startMs = Math.max(input.startAt.getTime(), Date.now());
 
   const campaign = await prisma.$transaction(async (tx) => {
-    const c = await tx.campaign.create({
+    const created = await tx.campaign.create({
       data: {
         userId: input.userId,
         senderId: sender.id,
@@ -43,9 +38,10 @@ export async function createCampaign(input: CreateCampaignInput) {
         totalCount: recipients.length,
       },
     });
+
     await tx.email.createMany({
       data: recipients.map((toEmail, i) => ({
-        campaignId: c.id,
+        campaignId: created.id,
         userId: input.userId,
         senderId: sender.id,
         toEmail,
@@ -55,7 +51,8 @@ export async function createCampaign(input: CreateCampaignInput) {
         scheduledAt: new Date(startMs + i * delayMs),
       })),
     });
-    return c;
+
+    return created;
   });
 
   const emails = await prisma.email.findMany({
@@ -64,7 +61,9 @@ export async function createCampaign(input: CreateCampaignInput) {
     orderBy: { sequence: 'asc' },
   });
 
-  await enqueueEmailsBulk(emails.map((e) => ({ emailId: e.id, runAt: e.scheduledAt })));
+  // Jobs are added after the DB commit. If the server dies in between,
+  // reconcilePendingEmails() adds the missing jobs on the next start.
+  await enqueueEmails(emails.map((e) => ({ emailId: e.id, runAt: e.scheduledAt })));
   void indexEmails(emails);
 
   return { campaign, scheduledCount: emails.length };

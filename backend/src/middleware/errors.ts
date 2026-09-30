@@ -13,7 +13,7 @@ export class HttpError extends Error {
   }
 }
 
-/** Wraps async route handlers so rejections reach the error middleware. */
+// passes errors from async handlers to the error middleware
 export const asyncHandler =
   <T extends Request>(fn: (req: T, res: Response, next: NextFunction) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) =>

@@ -10,7 +10,7 @@ interface PopoverProps {
   className?: string;
 }
 
-/** Anchored floating panel that closes on outside click / Escape. */
+// dropdown panel that closes on outside click or Escape
 export function Popover({ open, onClose, trigger, children, align = 'right', className = '' }: PopoverProps) {
   const ref = useRef<HTMLDivElement>(null);
   useClickOutside(ref, onClose, open);

@@ -15,8 +15,7 @@ async function main() {
   const worker = new Worker<EmailJobData>(EMAIL_QUEUE_NAME, processEmailJob, {
     connection: createRedis(),
     concurrency: env.WORKER_CONCURRENCY,
-    // If a worker dies mid-job, the lock expires and another worker picks the
-    // job up (stalled-job recovery). Idempotency guards make that safe.
+    // if a worker crashes mid-job, the lock expires and another worker retries it
     lockDuration: 60_000,
     maxStalledCount: 2,
   });

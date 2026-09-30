@@ -37,7 +37,7 @@ export function EmailListPage({ view }: { view: EmailView }) {
     [view, q, page],
   );
 
-  // Light polling so statuses move from Scheduled -> Sent without a manual refresh.
+  // refresh every 10s so sent emails move over without reloading
   useEffect(() => {
     const t = setInterval(() => void reload(), 10_000);
     return () => clearInterval(t);
@@ -74,7 +74,7 @@ export function EmailListPage({ view }: { view: EmailView }) {
 
       {data?.source && q && (
         <p className="px-6 pb-1 text-xs text-neutral-400">
-          {data.total} result{data.total === 1 ? '' : 's'} · searched via {data.source === 'elasticsearch' ? 'Elasticsearch' : 'Postgres (fallback)'}
+          {data.total} result{data.total === 1 ? '' : 's'} (searched via {data.source === 'elasticsearch' ? 'Elasticsearch' : 'Postgres fallback'})
         </p>
       )}
 
@@ -92,7 +92,7 @@ export function EmailListPage({ view }: { view: EmailView }) {
           <EmptyState
             icon={view === 'scheduled' ? <ClockIcon size={24} /> : <SendIcon size={24} />}
             title={q ? 'No matches' : empty.title}
-            description={q ? `Nothing matches “${q}”.` : empty.description}
+            description={q ? `Nothing matches "${q}".` : empty.description}
             action={!q && <Button onClick={() => navigate('/compose')}>Compose New Email</Button>}
           />
         ) : (
@@ -103,7 +103,7 @@ export function EmailListPage({ view }: { view: EmailView }) {
       {data && totalPages > 1 && !q && (
         <footer className="flex items-center justify-end gap-3 border-t border-neutral-100 px-6 py-3 text-sm text-neutral-500">
           <span>
-            Page {page} of {totalPages} · {data.total} emails
+            Page {page} of {totalPages} ({data.total} emails)
           </span>
           <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             Previous

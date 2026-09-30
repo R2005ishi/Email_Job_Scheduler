@@ -42,7 +42,7 @@ async function main() {
   app.use('/api/campaigns', campaignsRouter);
   app.use('/api/senders', sendersRouter);
 
-  // Live queue dashboard: waiting / delayed / active / completed / failed jobs.
+  // Bull Board - live view of the queue
   const boardAdapter = new ExpressAdapter();
   boardAdapter.setBasePath('/admin/queues');
   createBullBoard({ queues: [new BullMQAdapter(emailQueue)], serverAdapter: boardAdapter });

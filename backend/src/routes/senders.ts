@@ -11,7 +11,7 @@ sendersRouter.get(
   requireAuth,
   asyncHandler(async (_req, res) => {
     const senders = await prisma.sender.findMany({ orderBy: { createdAt: 'asc' } });
-    // Never leak SMTP credentials to the browser.
+    // don't send SMTP passwords to the browser
     res.json({
       senders: senders.map((s) => ({ id: s.id, email: s.email, name: s.name, hourlyLimit: senderHourlyLimit(s) })),
     });

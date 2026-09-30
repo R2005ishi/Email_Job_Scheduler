@@ -13,11 +13,8 @@ interface EtherealAccountInput {
   name?: string;
 }
 
-/**
- * Makes sure the sender pool exists. Senders are Ethereal (fake SMTP) accounts,
- * either supplied via ETHEREAL_ACCOUNTS or generated once through Ethereal's API
- * and persisted in Postgres so they stay stable across restarts.
- */
+// Creates the sender accounts on first start. Uses ETHEREAL_ACCOUNTS if set,
+// otherwise creates new Ethereal accounts and saves them in the DB.
 export async function ensureSenders() {
   const existing = await prisma.sender.count();
 
@@ -65,10 +62,8 @@ interface EtherealApiAccount {
   error?: string;
 }
 
-/**
- * Calls Ethereal's account API directly. (nodemailer.createTestAccount() caches
- * the first account per process, so it can't be used to create several senders.)
- */
+// nodemailer.createTestAccount() caches its account, so it always returns the
+// same one. Calling the Ethereal API directly gives us a new account each time.
 async function createEtherealAccount(): Promise<EtherealApiAccount> {
   const res = await fetch('https://api.nodemailer.com/user', {
     method: 'POST',
@@ -82,7 +77,7 @@ async function createEtherealAccount(): Promise<EtherealApiAccount> {
 
 const transporters = new Map<string, Transporter>();
 
-/** One pooled SMTP transporter per sender, reused across jobs. */
+// One pooled SMTP connection per sender, reused between jobs
 export function getTransporter(sender: Sender): Transporter {
   let t = transporters.get(sender.id);
   if (!t) {

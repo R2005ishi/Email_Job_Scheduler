@@ -4,7 +4,6 @@ import { ClockIcon } from '../ui/Icons';
 
 const base = 'inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap';
 
-/** Orange time pill for scheduled emails, grey "Sent", red "Failed" (Figma). */
 export function StatusBadge({ email }: { email: EmailItem }) {
   switch (email.status) {
     case 'SENT':
@@ -16,7 +15,7 @@ export function StatusBadge({ email }: { email: EmailItem }) {
         </span>
       );
     case 'SENDING':
-      return <span className={`${base} bg-blue-50 text-blue-600`}>Sending…</span>;
+      return <span className={`${base} bg-blue-50 text-blue-600`}>Sending...</span>;
     default: {
       const when = email.slotAt ?? email.scheduledAt;
       const deferred = email.deferredCount > 0;
@@ -27,7 +26,7 @@ export function StatusBadge({ email }: { email: EmailItem }) {
         >
           <ClockIcon size={12} />
           {formatBadgeTime(when)}
-          {deferred && ' · rate-limited'}
+          {deferred && ' (rate limited)'}
         </span>
       );
     }

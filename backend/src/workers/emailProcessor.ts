@@ -1,4 +1,5 @@
 import { DelayedError, Job } from 'bullmq';
+import nodemailer from 'nodemailer';
 import { env } from '../config/env';
 import { prisma } from '../lib/prisma';
 import { redis } from '../lib/redis';
@@ -7,161 +8,162 @@ import type { EmailJobData } from '../queue/emailQueue';
 import { HOUR_MS, hourWindowOf, reserveSendSlot, SlotReservation } from '../queue/rateLimiter';
 import { getTransporter, senderHourlyLimit } from '../services/senderService';
 import { indexEmail } from '../services/searchService';
-import { notifyRateLimitReached } from '../services/slackService';
-import nodemailer from 'nodemailer';
+import { notifyLimitReached } from '../services/slackService';
 
 const log = createLogger('worker');
 
-/** Written right after SMTP accepts the message - the last line of defence against double sends. */
-const sentMarkerKey = (emailId: string) => `email:sent:${emailId}`;
+// Set as soon as SMTP accepts the message. If we crash before updating the DB,
+// the retry sees this key and doesn't send the email a second time.
+const sentKey = (emailId: string) => `email:sent:${emailId}`;
 
-/** Don't bother re-delaying a job for less than this; just send. */
-const DELAY_TOLERANCE_MS = 250;
+type EmailWithRelations = NonNullable<Awaited<ReturnType<typeof loadEmail>>>;
 
-type LoadedEmail = NonNullable<Awaited<ReturnType<typeof loadEmail>>>;
-
-const loadEmail = (id: string) =>
-  prisma.email.findUnique({
+function loadEmail(id: string) {
+  return prisma.email.findUnique({
     where: { id },
     include: { sender: true, campaign: { select: { hourlyLimit: true, subject: true } } },
   });
+}
 
 async function reindex(id: string) {
-  const fresh = await prisma.email.findUnique({ where: { id }, include: { sender: { select: { email: true } } } });
-  if (fresh) await indexEmail(fresh);
+  const email = await prisma.email.findUnique({ where: { id }, include: { sender: { select: { email: true } } } });
+  if (email) await indexEmail(email);
 }
 
-async function maybeNotifyRateLimit(email: LoadedEmail, r: SlotReservation) {
-  if (r.reused) return;
-  const senderLimit = senderHourlyLimit(email.sender);
-  const campaignLimit = email.campaign.hourlyLimit;
-  const slotWindow = hourWindowOf(r.slotAt);
-
-  // (a) this reservation consumed the last slot of the window -> the limit is reached *now*
-  if (!r.deferred && senderLimit > 0 && r.senderCount === senderLimit) {
-    await notifyRateLimitReached({
-      userId: email.userId, kind: 'sender', subjectId: email.senderId, label: email.sender.email,
-      limit: senderLimit, window: slotWindow, resumesAt: (slotWindow + 1) * HOUR_MS,
-    });
-  }
-  if (!r.deferred && campaignLimit > 0 && r.campaignCount === campaignLimit) {
-    await notifyRateLimitReached({
-      userId: email.userId, kind: 'campaign', subjectId: email.campaignId, label: email.campaign.subject,
-      limit: campaignLimit, window: slotWindow, resumesAt: (slotWindow + 1) * HOUR_MS,
-    });
-  }
-  // (b) the natural window was already full and we got pushed to the next hour
-  if (r.deferred) {
-    const fullWindow = slotWindow - 1;
-    await notifyRateLimitReached({
-      userId: email.userId,
-      kind: r.reason === 1 ? 'sender' : 'campaign',
-      subjectId: r.reason === 1 ? email.senderId : email.campaignId,
-      label: r.reason === 1 ? email.sender.email : email.campaign.subject,
-      limit: r.reason === 1 ? senderLimit : campaignLimit,
-      window: fullWindow,
-      resumesAt: r.slotAt,
-    });
-  }
-}
-
-/**
- * Lifecycle of one job (jobId === emailId):
- *
- *  1. Idempotency guards  - skip if the DB row is SENT/FAILED or the Redis sent-marker exists.
- *  2. Slot reservation    - atomic Lua script enforces min gap + hourly caps (sender & campaign).
- *                           If the slot is in the future the job is moved back to "delayed"
- *                           (NOT failed, NOT dropped) and will re-enter here at slot time,
- *                           where the stored reservation is reused.
- *  3. Claim               - conditional UPDATE ... WHERE status IN (SCHEDULED, SENDING).
- *  4. SMTP send           - deterministic Message-ID derived from the email id.
- *  5. Mark sent           - Redis marker first, then DB row, then search index.
- */
+// Processes one email job. Job id == email id, so each email has exactly one job.
 export async function processEmailJob(job: Job<EmailJobData>, token?: string) {
-  const { emailId } = job.data;
-  const email = await loadEmail(emailId);
+  const email = await loadEmail(job.data.emailId);
+  if (!email || email.status === 'SENT' || email.status === 'FAILED') return;
 
-  if (!email) return { skipped: 'missing' };
-  if (email.status === 'SENT' || email.status === 'FAILED') return { skipped: email.status };
-
-  // Crash between "SMTP accepted" and "DB updated" -> finish the bookkeeping, don't resend.
-  if (await redis.exists(sentMarkerKey(emailId))) {
-    await prisma.email.update({ where: { id: emailId }, data: { status: 'SENT', sentAt: email.sentAt ?? new Date() } });
-    await reindex(emailId);
-    return { skipped: 'already-sent-marker' };
+  if (await redis.exists(sentKey(email.id))) {
+    await markSent(email.id, {});
+    return;
   }
 
   const reservation = await reserveSendSlot({
     senderId: email.senderId,
     campaignId: email.campaignId,
-    emailId,
+    emailId: email.id,
     minGapMs: env.MIN_DELAY_BETWEEN_EMAILS_MS,
     senderLimit: senderHourlyLimit(email.sender),
     campaignLimit: email.campaign.hourlyLimit,
   });
-  await maybeNotifyRateLimit(email, reservation);
+  await notifySlackIfLimitReached(email, reservation);
 
-  if (reservation.slotAt - reservation.now > DELAY_TOLERANCE_MS) {
-    // Deferred = hourly cap hit, retry at the next window. Otherwise it is just a
-    // reserved slot a few seconds out (min gap / delay between emails).
-    const deferredByCap = reservation.deferred;
-    await prisma.email.update({
-      where: { id: emailId },
-      data: {
-        slotAt: new Date(reservation.slotAt),
-        ...(deferredByCap ? { deferredCount: { increment: 1 } } : {}),
-      },
-    });
-    if (deferredByCap) {
-      log.info(`Email ${emailId} deferred to ${new Date(reservation.slotAt).toISOString()} (hourly cap)`);
-      void reindex(emailId);
-    }
-    if (!token) throw new Error('Missing job token - cannot delay job');
-    await job.moveToDelayed(reservation.slotAt, token);
-    throw new DelayedError();
+  // Our slot is in the future (min gap, or the hourly limit is full).
+  // Put the job back in the delayed set instead of failing it.
+  if (reservation.slotAt - reservation.now > 250) {
+    await delayUntilSlot(job, token, email.id, reservation);
   }
 
+  // Only one worker can move the email to SENDING
   const claimed = await prisma.email.updateMany({
-    where: { id: emailId, status: { in: ['SCHEDULED', 'SENDING'] } },
+    where: { id: email.id, status: { in: ['SCHEDULED', 'SENDING'] } },
     data: { status: 'SENDING', attempts: { increment: 1 }, slotAt: new Date(reservation.slotAt) },
   });
-  if (claimed.count === 0) return { skipped: 'not-claimable' };
+  if (claimed.count === 0) return;
 
-  const { sender } = email;
   try {
-    const info = await getTransporter(sender).sendMail({
-      from: `"${sender.name}" <${sender.email}>`,
-      to: email.toEmail,
-      subject: email.subject,
-      html: email.body,
-      text: email.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
-      messageId: `<${emailId}@reachinbox-scheduler.local>`,
-      headers: { 'X-Scheduler-Email-Id': emailId, 'X-Scheduler-Campaign-Id': email.campaignId },
-    });
-
-    await redis.set(sentMarkerKey(emailId), '1', 'EX', 30 * 24 * 3600);
-    await prisma.email.update({
-      where: { id: emailId },
-      data: {
-        status: 'SENT',
-        sentAt: new Date(),
-        messageId: info.messageId,
-        previewUrl: (nodemailer.getTestMessageUrl(info) || null) as string | null,
-        error: null,
-      },
-    });
-    await reindex(emailId);
-    log.info(`Sent ${emailId} -> ${email.toEmail} via ${sender.email}`);
-    return { sent: true, messageId: info.messageId };
+    await sendEmail(email);
   } catch (err) {
-    const message = (err as Error).message;
-    const isFinalAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? 1);
-    await prisma.email.update({
-      where: { id: emailId },
-      data: { status: isFinalAttempt ? 'FAILED' : 'SCHEDULED', error: message },
+    await handleSendFailure(job, email.id, err as Error);
+    throw err; // let BullMQ retry with backoff
+  }
+}
+
+async function delayUntilSlot(job: Job, token: string | undefined, emailId: string, reservation: SlotReservation) {
+  await prisma.email.update({
+    where: { id: emailId },
+    data: {
+      slotAt: new Date(reservation.slotAt),
+      deferredCount: reservation.deferred ? { increment: 1 } : undefined,
+    },
+  });
+
+  if (reservation.deferred) {
+    log.info(`Email ${emailId} deferred to ${new Date(reservation.slotAt).toISOString()} (hourly limit)`);
+    void reindex(emailId);
+  }
+
+  await job.moveToDelayed(reservation.slotAt, token);
+  throw new DelayedError();
+}
+
+async function sendEmail(email: EmailWithRelations) {
+  const { sender } = email;
+  const info = await getTransporter(sender).sendMail({
+    from: `"${sender.name}" <${sender.email}>`,
+    to: email.toEmail,
+    subject: email.subject,
+    html: email.body,
+    text: email.body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(),
+    // same id on every retry, so a real provider could also dedupe it
+    messageId: `<${email.id}@reachinbox-scheduler.local>`,
+  });
+
+  await redis.set(sentKey(email.id), '1', 'EX', 30 * 24 * 3600);
+  await markSent(email.id, {
+    messageId: info.messageId,
+    previewUrl: nodemailer.getTestMessageUrl(info) || null,
+  });
+  log.info(`Sent ${email.id} -> ${email.toEmail} via ${sender.email}`);
+}
+
+async function markSent(emailId: string, extra: { messageId?: string; previewUrl?: string | null }) {
+  await prisma.email.update({
+    where: { id: emailId },
+    data: { status: 'SENT', sentAt: new Date(), error: null, ...extra },
+  });
+  await reindex(emailId);
+}
+
+async function handleSendFailure(job: Job, emailId: string, err: Error) {
+  const attempt = job.attemptsMade + 1;
+  const lastAttempt = attempt >= (job.opts.attempts ?? 1);
+
+  await prisma.email.update({
+    where: { id: emailId },
+    data: { status: lastAttempt ? 'FAILED' : 'SCHEDULED', error: err.message },
+  });
+  await reindex(emailId);
+  log.warn(`Send failed for ${emailId} (attempt ${attempt}${lastAttempt ? ', giving up' : ''}): ${err.message}`);
+}
+
+// Sends a Slack message when this email used up the last slot of the hour,
+// or when it had to be pushed to the next hour because the limit was full.
+async function notifySlackIfLimitReached(email: EmailWithRelations, reservation: SlotReservation) {
+  if (reservation.reused) return;
+
+  const senderLimit = senderHourlyLimit(email.sender);
+  const campaignLimit = email.campaign.hourlyLimit;
+
+  if (reservation.deferred) {
+    const bySender = reservation.deferredBy === 'sender';
+    await notifyLimitReached({
+      userId: email.userId,
+      type: bySender ? 'sender' : 'campaign',
+      id: bySender ? email.senderId : email.campaignId,
+      name: bySender ? email.sender.email : email.campaign.subject,
+      limit: bySender ? senderLimit : campaignLimit,
+      hour: hourWindowOf(reservation.slotAt) - 1,
+      resumesAt: reservation.slotAt,
     });
-    await reindex(emailId);
-    log.warn(`Send failed for ${emailId} (attempt ${job.attemptsMade + 1}${isFinalAttempt ? ', final' : ''}): ${message}`);
-    throw err; // BullMQ retries with exponential backoff until attempts are exhausted
+    return;
+  }
+
+  const hour = hourWindowOf(reservation.slotAt);
+  const nextHour = (hour + 1) * HOUR_MS;
+
+  if (senderLimit > 0 && reservation.senderCount === senderLimit) {
+    await notifyLimitReached({
+      userId: email.userId, type: 'sender', id: email.senderId, name: email.sender.email,
+      limit: senderLimit, hour, resumesAt: nextHour,
+    });
+  }
+  if (campaignLimit > 0 && reservation.campaignCount === campaignLimit) {
+    await notifyLimitReached({
+      userId: email.userId, type: 'campaign', id: email.campaignId, name: email.campaign.subject,
+      limit: campaignLimit, hour, resumesAt: nextHour,
+    });
   }
 }

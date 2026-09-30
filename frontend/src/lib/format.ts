@@ -1,7 +1,7 @@
 const sameDay = (a: Date, b: Date) =>
   a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 
-/** "Tue 9:15:12 AM" style badge text from the Figma. Adds the date when not within the week. */
+// e.g. "Tue 9:15:12 AM", or with the date if it is more than a few days away
 export function formatBadgeTime(iso: string) {
   const d = new Date(iso);
   const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
@@ -21,7 +21,7 @@ export function formatFullDate(iso: string) {
   });
 }
 
-/** Value for <input type="datetime-local"> in the user's local timezone. */
+// format for <input type="datetime-local"> in local time
 export function toDateTimeLocal(d: Date) {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;

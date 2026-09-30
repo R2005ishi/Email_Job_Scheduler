@@ -30,7 +30,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
-/** Full-page navigations for OAuth flows (the browser must follow the redirects). */
+// OAuth needs a full page redirect, so these are plain links, not fetch calls
 export const oauthUrls = {
   googleLogin: '/api/auth/google',
   slackConnect: '/api/slack/connect',

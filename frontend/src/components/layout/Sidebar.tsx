@@ -36,7 +36,7 @@ export function Sidebar() {
               >
                 <Icon />
                 <span className="flex-1">{label}</span>
-                <span className="text-xs text-neutral-400">{counts ? counts[countKey] : '–'}</span>
+                <span className="text-xs text-neutral-400">{counts ? counts[countKey] : '-'}</span>
               </NavLink>
             </li>
           ))}

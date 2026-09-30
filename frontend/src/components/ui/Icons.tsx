@@ -2,7 +2,7 @@ import type { SVGProps } from 'react';
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number };
 
-/** Minimal stroke-icon factory so every icon shares size/stroke defaults. */
+// small helper so all icons share the same size and stroke
 const icon = (paths: React.ReactNode) =>
   function Icon({ size = 16, ...props }: IconProps) {
     return (
