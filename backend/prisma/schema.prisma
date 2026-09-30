@@ -1,0 +1,111 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  googleId  String   @unique
+  email     String   @unique
+  name      String
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  slack     SlackIntegration?
+  campaigns Campaign[]
+  emails    Email[]
+}
+
+/// One Slack workspace/channel connection per user (tenant).
+model SlackIntegration {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamId      String
+  teamName    String
+  channel     String
+  webhookUrl  String
+  accessToken String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+/// SMTP identity emails are sent from (Ethereal test accounts).
+model Sender {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  name        String
+  smtpHost    String
+  smtpPort    Int
+  smtpUser    String
+  smtpPass    String
+  /// Optional per-sender override of MAX_EMAILS_PER_HOUR_PER_SENDER
+  hourlyLimit Int?
+  createdAt   DateTime @default(now())
+
+  campaigns Campaign[]
+  emails    Email[]
+}
+
+/// One "Compose -> Schedule" action. Fans out into one Email row per recipient.
+model Campaign {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  senderId     String
+  sender       Sender   @relation(fields: [senderId], references: [id])
+  subject      String
+  body         String
+  startAt      DateTime
+  delayMs      Int
+  /// Max emails/hour for this campaign (0 = no campaign-level cap)
+  hourlyLimit  Int
+  totalCount   Int
+  createdAt    DateTime @default(now())
+
+  emails Email[]
+}
+
+enum EmailStatus {
+  SCHEDULED
+  SENDING
+  SENT
+  FAILED
+}
+
+model Email {
+  id            String      @id @default(uuid())
+  campaignId    String
+  campaign      Campaign    @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  senderId      String
+  sender        Sender      @relation(fields: [senderId], references: [id])
+  toEmail       String
+  subject       String
+  body          String
+  /// Position of this recipient inside its campaign - used to keep ordering on reschedule
+  sequence      Int
+  /// Time originally requested by the user
+  scheduledAt   DateTime
+  /// Actual send slot after throttling / rate limiting (null until the worker reserves one)
+  slotAt        DateTime?
+  status        EmailStatus @default(SCHEDULED)
+  attempts      Int         @default(0)
+  deferredCount Int         @default(0)
+  sentAt        DateTime?
+  messageId     String?
+  previewUrl    String?
+  error         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([userId, status, scheduledAt])
+  @@index([status])
+  @@index([campaignId])
+}
