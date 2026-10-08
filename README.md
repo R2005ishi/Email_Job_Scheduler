@@ -1,4 +1,4 @@
-# Email Scheduler (ReachInbox assignment)
+# Email Scheduler 
 
 A service that schedules emails and sends them at the right time, plus a dashboard to create and track them.
 
